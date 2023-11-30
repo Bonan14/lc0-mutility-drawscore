@@ -114,6 +114,7 @@ class SearchParams {
   float GetDrawScore() const { return kDrawScore; }
   ContemptMode GetContemptMode() const {
     std::string mode = options_.Get<std::string>(kContemptModeId);
+    if (kContempt == 0) return ContemptMode::NONE;
     if (mode == "play") return ContemptMode::PLAY;
     if (mode == "white_side_analysis") return ContemptMode::WHITE;
     if (mode == "black_side_analysis") return ContemptMode::BLACK;

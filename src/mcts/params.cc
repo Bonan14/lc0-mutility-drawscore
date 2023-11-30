@@ -116,7 +116,7 @@ SearchParams::WDLRescaleParams AccurateWDLRescaleParams(
 // Less accurate Elo model, but automatically chooses draw rate and accuracy
 // based on the absolute Elo of both sides. Doesn't require clamping, but still
 // uses the parameter.
-SearchParams::WDLRescaleParams SimplifiedWDLRescaleParams(
+/*SearchParams::WDLRescaleParams SimplifiedWDLRescaleParams(
     float contempt, float draw_rate_reference, float elo_active,
     float contempt_max, float contempt_attenuation) {
   // Scale parameter of the logistic WDL distribution is fitted as a sigmoid,
@@ -147,6 +147,26 @@ SearchParams::WDLRescaleParams SimplifiedWDLRescaleParams(
   float mu_opp =
       -std::log(10) / 200 * scale_zero * elo_slope *
       std::log(1.0f + std::exp(-elo_opp / elo_slope + offset) / scale_zero);
+  float diff = (mu_active - mu_opp) * contempt_attenuation;
+  return SearchParams::WDLRescaleParams(ratio, diff);
+}*/
+SearchParams::WDLRescaleParams SimplifiedWDLRescaleParams(
+    float draw_rate_reference, float active_elo, float opp_elo, 
+    float contempt_max, float contempt_attenuation) {
+  const float scale_zero = 15.0f;
+  const float elo_slope = 425.0f;
+  const float offset = 6.75f;
+
+  float scale_reference = 1.0f / std::log((1.0f + draw_rate_reference) /
+                                          (1.0f - draw_rate_reference));
+  float elo_diff = active_elo - opp_elo;
+  float sigmoid_input = (-elo_diff + draw_rate_reference + offset) / contempt_max;
+  float scale_target = 1.0f / (1.0f + std::exp(sigmoid_input));
+  float ratio = scale_target / scale_reference;
+  float mu_active =
+      std::log(1.0f + std::exp(active_elo / elo_slope + offset) / scale_zero);
+  float mu_opp =
+      std::log(1.0f + std::exp(opp_elo / elo_slope + offset) / scale_zero);
   float diff = (mu_active - mu_opp) * contempt_attenuation;
   return SearchParams::WDLRescaleParams(ratio, diff);
 }
@@ -611,8 +631,9 @@ SearchParams::SearchParams(const OptionsDict& options)
                     options.Get<float>(kContemptMaxValueId),
                     options.Get<float>(kWDLContemptAttenuationId))
               : SimplifiedWDLRescaleParams(
-                    kContempt, options.Get<float>(kWDLDrawRateReferenceId),
+                    options.Get<float>(kWDLDrawRateReferenceId),
                     options.Get<float>(kWDLCalibrationEloId),
+                    options.Get<float>(kWDLCalibrationEloId) - (-kContempt),
                     options.Get<float>(kContemptMaxValueId),
                     options.Get<float>(kWDLContemptAttenuationId))),
       kWDLEvalObjectivity(options.Get<float>(kWDLEvalObjectivityId)),

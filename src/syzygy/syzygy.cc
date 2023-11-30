@@ -1579,7 +1579,7 @@ WDLScore SyzygyTablebase::probe_wdl(const Position& pos, ProbeState* result) {
 int SyzygyTablebase::probe_dtz(const Position& pos, ProbeState* result) {
   *result = OK;
   const WDLScore wdl = search<true>(pos, result);
-  if (*result == FAIL || wdl == WDL_DRAW) {  // DTZ tables don't store draws
+  if (*result == FAIL /*|| wdl == WDL_DRAW*/) {  // DTZ tables don't store draws
     return 0;
   }
   // DTZ stores a 'don't care' value in this case, or even a plain wrong one as
@@ -1622,6 +1622,20 @@ int SyzygyTablebase::probe_dtz(const Position& pos, ProbeState* result) {
   return min_DTZ == 0xFFFF ? -1 : min_DTZ;
 }
 
+/*int SyzygyTablebase::probe_dtz(const Position& pos, ProbeState* result) {
+  *result = OK;
+  return search(pos, result);
+}
+
+int dtz(const Position& pos, ProbeState* result) {
+    *result = OK;
+    int d = SyzygyTablebase::probe_dtz(pos, result);
+    if (*result != OK) {
+       d = 0;
+    }
+ return d;
+}
+*/
 // Use the DTZ tables to rank root moves.
 //
 // A return value false indicates that not all probes were successful.
