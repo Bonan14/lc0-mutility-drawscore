@@ -39,13 +39,13 @@
 #endif
 
 #ifndef DEFAULT_MINIBATCH_SIZE
-#define DEFAULT_MINIBATCH_SIZE 256
+#define DEFAULT_MINIBATCH_SIZE 12
 #endif
 #ifndef DEFAULT_MAX_PREFETCH
-#define DEFAULT_MAX_PREFETCH 32
+#define DEFAULT_MAX_PREFETCH 0
 #endif
 #ifndef DEFAULT_TASK_WORKERS
-#define DEFAULT_TASK_WORKERS 4
+#define DEFAULT_TASK_WORKERS 3
 #endif
 
 namespace lczero {
@@ -526,8 +526,7 @@ void SearchParams::Populate(OptionsParser* options) {
   options->Add<BoolOption>(kDisplayCacheUsageId) = false;
   options->Add<IntOption>(kMaxConcurrentSearchersId, 0, 128) = 1;
   options->Add<FloatOption>(kDrawScoreId, -1.0f, 1.0f) = 0.0f;
-  std::vector<std::string> mode = {"play", "white_side_analysis",
-                                   "black_side_analysis", "disable"};
+  std::vector<std::string> mode = {"play", "disable"};
   options->Add<ChoiceOption>(kContemptModeId, mode) = "play";
   // The default kContemptId is empty, so the initial contempt value is taken
   // from kUCIRatingAdvId. Adding any value (without name) in the comma
