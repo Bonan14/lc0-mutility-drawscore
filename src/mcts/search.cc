@@ -107,7 +107,9 @@ class MEvaluator {
     const float child_m = std::round(child->GetM() / 2.0f);
     // Weighted average(w) of movesleft to give greater priority to
     // shorter moves when winning and longer moves when losing.
-    double w = 1.0f / (1.0f + std::exp((steepness_factor_) 
+
+    double w = 1.0f / (1.0f + std::exp(steepness_factor_ 
+
                      * ((move_midpoint_ - child_m) / 200.0f)));
     double m = ((move_midpoint_ - child_m) / 200.0f);
     // Add 1 to the value before taking the logarithm,
@@ -170,26 +172,6 @@ Search::Search(const NodeTree& tree, Network* network,
                              std::memory_order_release);
   }
   contempt_mode_ = params_.GetContemptMode();
-  // Make sure the contempt mode is never "play" beyond this point.
-  if (contempt_mode_ == ContemptMode::PLAY) {
-    if (infinite) {
-      // For infinite search disable contempt, only "white"/"black" make sense.
-      contempt_mode_ = ContemptMode::NONE;
-      // Issue a warning only if contempt mode would have an effect.
-      if (params_.GetWDLRescaleDiff() != 0.0f) {
-        std::vector<ThinkingInfo> info(1);
-        info.back().comment =
-            "WARNING: Contempt mode set to 'disable' as 'play' not supported "
-            "for infinite search.";
-        uci_responder_->OutputThinkingInfo(&info);
-      }
-    } else {
-      // Otherwise set it to the root move's side, unless pondering.
-      contempt_mode_ = played_history_.IsBlackToMove() != ponder
-                           ? ContemptMode::BLACK
-                           : ContemptMode::WHITE;
-    }
-  }
 }
 
 namespace {
@@ -259,6 +241,9 @@ void Search::SendUciInfo() REQUIRES(nodes_mutex_) REQUIRES(counters_mutex_) {
   const auto per_pv_counters = params_.GetPerPvCounters();
   const auto display_cache_usage = params_.GetDisplayCacheUsage();
   const auto draw_score = GetDrawScore(false);
+  ProbeState state;
+  auto dtz = syzygy_tb_->probe_dtz(played_history_.Last(), &state); 
+  
 
   std::vector<ThinkingInfo> uci_infos;
 
@@ -298,21 +283,21 @@ void Search::SendUciInfo() REQUIRES(nodes_mutex_) REQUIRES(counters_mutex_) {
     float mu_uci = 0.0f;
     if (score_type == "WDL_mu" || (params_.GetWDLRescaleDiff() != 0.0f &&
                                    contempt_mode_ != ContemptMode::NONE)) {
-      auto sign = ((contempt_mode_ == ContemptMode::BLACK) ==
-                   played_history_.IsBlackToMove())
-                      ? 1.0f
-                      : -1.0f;
       mu_uci = WDLRescale(
           wl, d, params_.GetWDLRescaleRatio(),
           contempt_mode_ == ContemptMode::NONE
               ? 0
               : params_.GetWDLRescaleDiff() * params_.GetWDLEvalObjectivity(),
-          sign, true);
+          1.0f, true);
     }
     const auto q = edge.GetQ(default_q, draw_score);
     if (edge.IsTerminal() && wl != 0.0f) {
       uci_info.mate = std::copysign(
-          std::round(edge.GetM(0.0f)) / 2 + (edge.IsTbTerminal() ? 101 : 1),
+          std::round(edge.GetM(0.0f)) / 2,
+          wl);
+    } else if (edge.IsTbTerminal() && wl != 0.0f) {
+      uci_info.mate = std::copysign( 
+          std::round(edge.GetM(dtz) / 2.0f + dtz) + 1.0f,
           wl);
     } else if (score_type == "centipawn_with_drawscore") {
       uci_info.score = 90 * tan(1.5637541897 * q);
@@ -1128,6 +1113,7 @@ void SearchWorker::RunTasks(int tid) {
         if (nta >= tc && exiting_) return;
       }
     }
+    //Bonan
     if (task != nullptr) {
       switch (task->task_type) {
         case PickTask::kGathering: {
@@ -1511,12 +1497,7 @@ int SearchWorker::WaitForTasks() {
 
 void SearchWorker::PickNodesToExtend(int collision_limit) {
   ResetTasks();
-  {
-    // While nothing is ready yet - wake the task runners so they are ready to
-    // receive quickly.
-    Mutex::Lock lock(picking_tasks_mutex_);
-    task_added_.notify_all();
-  }
+
   std::vector<Move> empty_movelist;
   // This lock must be held until after the task_completed_ wait succeeds below.
   // Since the tasks perform work which assumes they have the lock, even though
@@ -1982,22 +1963,27 @@ void SearchWorker::ExtendNode(Node* node, int depth,
         history->Last().GetRule50Ply() == 0 &&
         (board.ours() | board.theirs()).count() <=
             search_->syzygy_tb_->max_cardinality()) {
+      SharedMutex::SharedLock lock(search_->nodes_mutex_);
+      
       ProbeState state;
       const WDLScore wdl =
           search_->syzygy_tb_->probe_wdl(history->Last(), &state);
+      auto dtz = search_->syzygy_tb_->probe_dtz(history->Last(), &state); 
       // Only fail state means the WDL is wrong, probe_wdl may produce correct
       // result with a stat other than OK.
       if (state != FAIL) {
         // TB nodes don't have NN evaluation, assign M from parent node.
-        float m = 0.0f;
+        float m = dtz;
         // Need a lock to access parent, in case MakeSolid is in progress.
-        {
+        /*{
           SharedMutex::SharedLock lock(search_->nodes_mutex_);
           auto parent = node->GetParent();
           if (parent) {
             m = std::max(0.0f, parent->GetM() - 1.0f);
+          } else {
+              m = node->GetM();
           }
-        }
+        }*/
         // If the colors seem backwards, check the checkmate check above.
         if (wdl == WDL_WIN) {
           node->MakeTerminal(GameResult::BLACK_WON, m,
@@ -2204,13 +2190,9 @@ void SearchWorker::FetchSingleNodeResult(NodeToProcess* node_to_process,
   auto v = -computation.GetQVal(idx_in_computation);
   auto d = computation.GetDVal(idx_in_computation);
   
-  if (params_.GetWDLRescaleRatio() != 1.0f ||
-      (params_.GetWDLRescaleDiff() != 0.0f &&
-       search_->contempt_mode_ != ContemptMode::NONE)) {
-    // Check whether root moves are from the set perspective.
-    bool root_stm = (search_->contempt_mode_ == ContemptMode::BLACK) ==
-                    search_->played_history_.Last().IsBlackToMove();
-    auto sign = (root_stm ^ (node_to_process->depth & 1)) ? 1.0f : -1.0f;
+  if (params_.GetWDLRescaleDiff() != 0.0f &&
+       search_->contempt_mode_ != ContemptMode::NONE) {
+    float sign = 1.0f;
     WDLRescale(v, d, params_.GetWDLRescaleRatio(),
                search_->contempt_mode_ == ContemptMode::NONE
                    ? 0

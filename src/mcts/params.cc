@@ -38,11 +38,15 @@
 #include "params_override.h"
 #endif
 
+
+#ifndef DEFAULT_MINIBATCH_SIZE
+#define DEFAULT_MINIBATCH_SIZE 12
+#endif
 #ifndef DEFAULT_MAX_PREFETCH
-#define DEFAULT_MAX_PREFETCH 32
+#define DEFAULT_MAX_PREFETCH 0
 #endif
 #ifndef DEFAULT_TASK_WORKERS
-#define DEFAULT_TASK_WORKERS 4
+#define DEFAULT_TASK_WORKERS 3
 #endif
 
 namespace lczero {
@@ -113,7 +117,7 @@ SearchParams::WDLRescaleParams AccurateWDLRescaleParams(
 // Less accurate Elo model, but automatically chooses draw rate and accuracy
 // based on the absolute Elo of both sides. Doesn't require clamping, but still
 // uses the parameter.
-SearchParams::WDLRescaleParams SimplifiedWDLRescaleParams(
+/*SearchParams::WDLRescaleParams SimplifiedWDLRescaleParams(
     float contempt, float draw_rate_reference, float elo_active,
     float contempt_max, float contempt_attenuation) {
   // Scale parameter of the logistic WDL distribution is fitted as a sigmoid,
@@ -144,6 +148,26 @@ SearchParams::WDLRescaleParams SimplifiedWDLRescaleParams(
   float mu_opp =
       -std::log(10) / 200 * scale_zero * elo_slope *
       std::log(1.0f + std::exp(-elo_opp / elo_slope + offset) / scale_zero);
+  float diff = (mu_active - mu_opp) * contempt_attenuation;
+  return SearchParams::WDLRescaleParams(ratio, diff);
+}*/
+SearchParams::WDLRescaleParams SimplifiedWDLRescaleParams(
+    float draw_rate_reference, float active_elo, float opp_elo, 
+    float contempt_max, float contempt_attenuation) {
+  const float scale_zero = 15.0f;
+  const float elo_slope = 425.0f;
+  const float offset = 6.75f;
+
+  float scale_reference = 1.0f / std::log((1.0f + draw_rate_reference) /
+                                          (1.0f - draw_rate_reference));
+  float elo_diff = active_elo - opp_elo;
+  float sigmoid_input = (-elo_diff + draw_rate_reference + offset) / contempt_max;
+  float scale_target = 1.0f / (1.0f + std::exp(sigmoid_input));
+  float ratio = scale_target / scale_reference;
+  float mu_active =
+      std::log(1.0f + std::exp(active_elo / elo_slope + offset) / scale_zero);
+  float mu_opp =
+      std::log(1.0f + std::exp(opp_elo / elo_slope + offset) / scale_zero);
   float diff = (mu_active - mu_opp) * contempt_attenuation;
   return SearchParams::WDLRescaleParams(ratio, diff);
 }
@@ -504,8 +528,7 @@ void SearchParams::Populate(OptionsParser* options) {
   options->Add<BoolOption>(kDisplayCacheUsageId) = false;
   options->Add<IntOption>(kMaxConcurrentSearchersId, 0, 128) = 1;
   options->Add<FloatOption>(kDrawScoreId, -1.0f, 1.0f) = 0.0f;
-  std::vector<std::string> mode = {"play", "white_side_analysis",
-                                   "black_side_analysis", "disable"};
+  std::vector<std::string> mode = {"play", "disable"};
   options->Add<ChoiceOption>(kContemptModeId, mode) = "play";
   // The default kContemptId is empty, so the initial contempt value is taken
   // from kUCIRatingAdvId. Adding any value (without name) in the comma
@@ -608,8 +631,9 @@ SearchParams::SearchParams(const OptionsDict& options)
                     options.Get<float>(kContemptMaxValueId),
                     options.Get<float>(kWDLContemptAttenuationId))
               : SimplifiedWDLRescaleParams(
-                    kContempt, options.Get<float>(kWDLDrawRateReferenceId),
+                    options.Get<float>(kWDLDrawRateReferenceId),
                     options.Get<float>(kWDLCalibrationEloId),
+                    options.Get<float>(kWDLCalibrationEloId) - (-kContempt),
                     options.Get<float>(kContemptMaxValueId),
                     options.Get<float>(kWDLContemptAttenuationId))),
       kWDLEvalObjectivity(options.Get<float>(kWDLEvalObjectivityId)),
