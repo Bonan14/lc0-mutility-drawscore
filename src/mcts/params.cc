@@ -1,6 +1,6 @@
 /*
   This file is part of Leela Chess Zero.
-  Copyright (C) 2018-2019 The LCZero Authors
+  Copyright (C) 2018-2023 The LCZero Authors
 
   Leela Chess is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -37,6 +37,7 @@
 #if __has_include("params_override.h")
 #include "params_override.h"
 #endif
+
 
 #ifndef DEFAULT_MINIBATCH_SIZE
 #define DEFAULT_MINIBATCH_SIZE 12
@@ -176,7 +177,7 @@ const OptionId SearchParams::kMiniBatchSizeId{
     "minibatch-size", "MinibatchSize",
     "How many positions the engine tries to batch together for parallel NN "
     "computation. Larger batches may reduce strength a bit, especially with a "
-    "small number of playouts."};
+    "small number of playouts. Set to 0 to use a backend suggested value."};
 const OptionId SearchParams::kMaxPrefetchBatchId{
     "max-prefetch", "MaxPrefetch",
     "When the engine cannot gather a large enough batch for immediate use, try "
@@ -307,7 +308,7 @@ const OptionId SearchParams::kOutOfOrderEvalId{
     "in the cache or is terminal, evaluate it right away without sending the "
     "batch to the NN. When off, this may only happen with the very first node "
     "of a batch; when on, this can happen with any node."};
-const OptionId SearchParams::kMaxOutOfOrderEvalsId{
+const OptionId SearchParams::kMaxOutOfOrderEvalsFactorId{
     "max-out-of-order-evals-factor", "MaxOutOfOrderEvalsFactor",
     "Maximum number of out of order evals during gathering of a batch is "
     "calculated by multiplying the maximum batch size by this number."};
@@ -415,7 +416,8 @@ const OptionId SearchParams::kSolidTreeThresholdId{
     "solidification for improved cache locality."};
 const OptionId SearchParams::kTaskWorkersPerSearchWorkerId{
     "task-workers", "TaskWorkers",
-    "The number of task workers to use to help the search worker."};
+    "The number of task workers to use to help the search worker. Setting to "
+    "-1 will use a heuristic value."};
 const OptionId SearchParams::kMinimumWorkSizeForProcessingId{
     "minimum-processing-work", "MinimumProcessingWork",
     "This many visits need to be gathered before tasks will be used to "
@@ -466,7 +468,7 @@ const OptionId SearchParams::kSearchSpinBackoffId{
 void SearchParams::Populate(OptionsParser* options) {
   // Here the uci optimized defaults" are set.
   // Many of them are overridden with training specific values in tournament.cc.
-  options->Add<IntOption>(kMiniBatchSizeId, 1, 1024) = DEFAULT_MINIBATCH_SIZE;
+  options->Add<IntOption>(kMiniBatchSizeId, 0, 1024) = 0;
   options->Add<IntOption>(kMaxPrefetchBatchId, 0, 1024) = DEFAULT_MAX_PREFETCH;
   options->Add<FloatOption>(kCpuctId, 0.0f, 100.0f) = 1.745f;
   options->Add<FloatOption>(kCpuctAtRootId, 0.0f, 100.0f) = 1.745f;
@@ -504,7 +506,7 @@ void SearchParams::Populate(OptionsParser* options) {
   options->Add<FloatOption>(kMaxCollisionVisitsScalingPowerId, 0.01, 100) =
       1.25;
   options->Add<BoolOption>(kOutOfOrderEvalId) = true;
-  options->Add<FloatOption>(kMaxOutOfOrderEvalsId, 0.0f, 100.0f) = 2.4f;
+  options->Add<FloatOption>(kMaxOutOfOrderEvalsFactorId, 0.0f, 100.0f) = 2.4f;
   options->Add<BoolOption>(kStickyEndgamesId) = true;
   options->Add<BoolOption>(kSyzygyFastPlayId) = false;
   options->Add<IntOption>(kMultiPvId, 1, 500) = 1;
@@ -541,8 +543,7 @@ void SearchParams::Populate(OptionsParser* options) {
   options->Add<FloatOption>(kWDLBookExitBiasId, -2.0f, 2.0f) = 0.65f;
   options->Add<FloatOption>(kNpsLimitId, 0.0f, 1e6f) = 0.0f;
   options->Add<IntOption>(kSolidTreeThresholdId, 1, 2000000000) = 100;
-  options->Add<IntOption>(kTaskWorkersPerSearchWorkerId, 0, 128) =
-      DEFAULT_TASK_WORKERS;
+  options->Add<IntOption>(kTaskWorkersPerSearchWorkerId, 0, 128) = -1;
   options->Add<IntOption>(kMinimumWorkSizeForProcessingId, 2, 100000) = 20;
   options->Add<IntOption>(kMinimumWorkSizeForPickingId, 1, 100000) = 1;
   options->Add<IntOption>(kMinimumRemainingWorkSizeForPickingId, 0, 100000) =
@@ -636,9 +637,8 @@ SearchParams::SearchParams(const OptionsDict& options)
                     options.Get<float>(kContemptMaxValueId),
                     options.Get<float>(kWDLContemptAttenuationId))),
       kWDLEvalObjectivity(options.Get<float>(kWDLEvalObjectivityId)),
-      kMaxOutOfOrderEvals(std::max(
-          1, static_cast<int>(options.Get<float>(kMaxOutOfOrderEvalsId) *
-                              options.Get<int>(kMiniBatchSizeId)))),
+      kMaxOutOfOrderEvalsFactor(
+          options.Get<float>(kMaxOutOfOrderEvalsFactorId)),
       kNpsLimit(options.Get<float>(kNpsLimitId)),
       kSolidTreeThreshold(options.Get<int>(kSolidTreeThresholdId)),
       kTaskWorkersPerSearchWorker(
